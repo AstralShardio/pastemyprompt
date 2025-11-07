@@ -21,6 +21,21 @@
         <button id="new-project-btn" class="btn-new-project">
           <span>+</span> New Project
         </button>
+        <div class="sidebar-footer">
+          <button id="template-library-btn" class="sidebar-footer-btn" title="Template Library">
+            <svg class="icon-small" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+          </button>
+          <button id="dark-mode-toggle" class="sidebar-footer-btn" title="Toggle dark mode">
+            <svg id="moon-icon" class="icon-small hidden" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path>
+            </svg>
+            <svg id="sun-icon" class="icon-small" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"></path>
+            </svg>
+          </button>
+        </div>
       </div>
       <div id="pro-badge" class="pro-section hidden">
         <div class="pro-badge">PRO</div>
@@ -32,28 +47,24 @@
     <div class="main-content">
       <!-- Top Bar -->
       <div class="top-bar">
-        <input 
-          type="text" 
-          id="search-input" 
-          placeholder="Search prompts..." 
-          class="search-input"
-        />
-        <button id="new-prompt-btn" class="btn btn-primary">
-          New Prompt
-        </button>
-        <button id="quick-add-clipboard-btn" class="btn btn-secondary" title="Quick add from clipboard">
-          <svg class="icon-small" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
-          </svg>
-        </button>
-        <button id="dark-mode-toggle" class="icon-btn" title="Toggle dark mode">
-          <svg id="moon-icon" class="icon hidden" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path>
-          </svg>
-          <svg id="sun-icon" class="icon" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"></path>
-          </svg>
-        </button>
+        <div class="top-bar-left">
+          <input 
+            type="text" 
+            id="search-input" 
+            placeholder="Search prompts..." 
+            class="search-input"
+          />
+        </div>
+        <div class="top-bar-right">
+          <button id="new-prompt-btn" class="btn btn-primary">
+            New Prompt
+          </button>
+          <button id="quick-add-clipboard-btn" class="btn btn-secondary" title="Quick add from clipboard">
+            <svg class="icon-small" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <!-- Filter Bar -->
@@ -87,6 +98,8 @@
       <div id="pro-actions" class="pro-actions hidden">
         <button id="export-btn" class="btn btn-success">Export JSON</button>
         <button id="import-btn" class="btn btn-purple">Import JSON</button>
+        <button id="import-csv-btn" class="btn btn-secondary">Import CSV</button>
+        <button id="import-text-btn" class="btn btn-secondary">Import Text</button>
       </div>
     </div>
 
@@ -152,6 +165,24 @@
             <label>Project Name</label>
             <input type="text" id="project-name-input" required class="form-input" />
           </div>
+          <div class="form-group">
+            <label>Description</label>
+            <textarea id="project-description-input" rows="2" class="form-input" placeholder="Optional description"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Parent Project (for nesting)</label>
+            <select id="project-parent-select" class="form-input">
+              <option value="">None (Top Level)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Color</label>
+            <input type="color" id="project-color-input" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label>Icon (emoji or text)</label>
+            <input type="text" id="project-icon-input" class="form-input" placeholder="📁" maxlength="2" />
+          </div>
           <div class="form-actions">
             <button type="button" id="project-modal-cancel-btn" class="btn btn-secondary">Cancel</button>
             <button type="submit" class="btn btn-primary">Create</button>
@@ -172,6 +203,7 @@
     <button id="prompt-context-copy" class="context-menu-item">Copy</button>
     <button id="prompt-context-edit" class="context-menu-item">Edit</button>
     <button id="prompt-context-duplicate" class="context-menu-item">Duplicate</button>
+    <button id="prompt-context-find-duplicates" class="context-menu-item">Find Duplicates</button>
     <button id="prompt-context-favorite" class="context-menu-item">Toggle Favorite</button>
     <button id="prompt-context-delete" class="context-menu-item context-menu-item-danger">Archive</button>
   </div>
@@ -259,6 +291,42 @@
             <kbd>Esc</kbd>
             <span>Close modals</span>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template Library Modal -->
+  <div id="template-library-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Template Library</h3>
+        <button class="modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="template-list" class="template-list"></div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Import CSV Modal -->
+  <input type="file" id="import-csv-file-input" accept=".csv" style="display: none;" />
+  <!-- Import Text Modal -->
+  <div id="import-text-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Import from Plain Text</h3>
+        <button class="modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Paste text (will be split by separators like --- or ===)</label>
+          <textarea id="import-text-textarea" rows="10" class="form-input" placeholder="Paste your prompts here..."></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="import-text-cancel-btn">Cancel</button>
+          <button type="button" id="import-text-submit-btn" class="btn btn-primary">Import</button>
         </div>
       </div>
     </div>

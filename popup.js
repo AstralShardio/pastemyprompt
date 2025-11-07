@@ -22,7 +22,11 @@ let state = {
   },
   deletedPrompt: null, // For undo functionality
   firstTimeUser: true,
-  archivedPrompts: [] // Array of archived prompt IDs
+  archivedPrompts: [], // Array of archived prompt IDs
+  promptHistory: {}, // Version history for prompts { promptId: [{timestamp, title, prompt, tags, ...}] }
+  selectedPrompts: [], // For batch operations
+  templates: [], // Prompt templates
+  expandedProjects: {} // Track which projects are expanded { projectId: true/false }
 };
 
 // Predefined tags
@@ -67,7 +71,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Load data from storage
 async function loadData() {
-  const result = await chrome.storage.local.get(['projects', 'prompts', 'recent', 'favorites', 'pro', 'darkMode', 'sortBy', 'firstTimeUser', 'archivedPrompts']);
+  const result = await chrome.storage.local.get(['projects', 'prompts', 'recent', 'favorites', 'pro', 'darkMode', 'sortBy', 'firstTimeUser', 'archivedPrompts', 'promptHistory', 'templates', 'expandedProjects']);
   state.projects = result.projects || [];
   state.prompts = result.prompts || [];
   state.recent = result.recent || [];
@@ -75,6 +79,9 @@ async function loadData() {
   state.sortBy = result.sortBy || 'lastUsed';
   state.firstTimeUser = result.firstTimeUser !== false; // Default to true
   state.archivedPrompts = result.archivedPrompts || [];
+  state.promptHistory = result.promptHistory || {};
+  state.templates = result.templates || [];
+  state.expandedProjects = result.expandedProjects || {};
   // Check both chrome.storage and localStorage for Pro status
   state.pro = result.pro === true;
   try {
@@ -100,8 +107,39 @@ async function loadData() {
       prompt.createdAt = prompt.lastUsed || Date.now();
       needsSave = true;
     }
+    // Migrate projects to include color, icon, description, parentId
+    if (!prompt.version) {
+      prompt.version = 1;
+    }
   });
+  
+  // Migrate projects to support enhanced organization
+  state.projects.forEach(project => {
+    if (typeof project.color === 'undefined') {
+      project.color = null;
+      needsSave = true;
+    }
+    if (typeof project.icon === 'undefined') {
+      project.icon = null;
+      needsSave = true;
+    }
+    if (typeof project.description === 'undefined') {
+      project.description = '';
+      needsSave = true;
+    }
+    if (typeof project.parentId === 'undefined') {
+      project.parentId = null;
+      needsSave = true;
+    }
+  });
+  
   if (needsSave) {
+    await saveData();
+  }
+  
+  // Initialize default templates if empty
+  if (state.templates.length === 0) {
+    state.templates = getDefaultTemplates();
     await saveData();
   }
 }
@@ -117,7 +155,10 @@ async function saveData() {
     darkMode: state.darkMode,
     sortBy: state.sortBy,
     firstTimeUser: state.firstTimeUser,
-    archivedPrompts: state.archivedPrompts
+    archivedPrompts: state.archivedPrompts,
+    promptHistory: state.promptHistory,
+    templates: state.templates,
+    expandedProjects: state.expandedProjects
   });
 }
 
@@ -250,12 +291,78 @@ function setupEventListeners() {
   document.getElementById('project-modal').addEventListener('click', (e) => {
     if (e.target.id === 'project-modal') closeProjectModal();
   });
+  
+  // Template Library Modal
+  document.getElementById('template-library-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'template-library-modal') closeTemplateLibrary();
+  });
+  
+  // Import Text Modal
+  document.getElementById('import-text-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'import-text-modal') closeImportTextModal();
+  });
+  
+  // Close buttons for new modals
+  document.querySelectorAll('#template-library-modal .modal-close, #import-text-modal .modal-close').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const modal = btn.closest('.modal-overlay');
+      if (modal) {
+        if (modal.id === 'template-library-modal') closeTemplateLibrary();
+        else if (modal.id === 'import-text-modal') closeImportTextModal();
+      }
+    });
+  });
 
   // Export/Import (Pro only)
   document.getElementById('export-btn')?.addEventListener('click', exportData);
   document.getElementById('import-btn')?.addEventListener('click', () => {
     document.getElementById('import-file-input')?.click();
   });
+  
+  // Import CSV
+  document.getElementById('import-csv-btn')?.addEventListener('click', () => {
+    document.getElementById('import-csv-file-input')?.click();
+  });
+  
+  document.getElementById('import-csv-file-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    try {
+      await importFromCSV(text);
+    } catch (error) {
+      // Error already shown in importFromCSV
+    }
+    e.target.value = '';
+  });
+  
+  // Import Text
+  document.getElementById('import-text-btn')?.addEventListener('click', () => {
+    document.getElementById('import-text-modal').classList.remove('hidden');
+  });
+  
+  document.getElementById('import-text-cancel-btn')?.addEventListener('click', () => {
+    closeImportTextModal();
+  });
+  
+  document.getElementById('import-text-submit-btn')?.addEventListener('click', async () => {
+    const textarea = document.getElementById('import-text-textarea');
+    const text = textarea?.value || '';
+    if (!text.trim()) {
+      showToast('Please paste some text to import', true, 'error');
+      return;
+    }
+    try {
+      await importFromPlainText(text);
+      closeImportTextModal();
+    } catch (error) {
+      // Error already shown
+    }
+  });
+  
+  // Template Library
+  document.getElementById('template-library-btn')?.addEventListener('click', openTemplateLibrary);
 
   // Create hidden file input for import
   const importInput = document.createElement('input');
@@ -274,8 +381,12 @@ function setupEventListeners() {
   // Context menu
   document.getElementById('context-rename')?.addEventListener('click', () => {
     if (state.contextMenuProject) {
-      closeContextMenu();
-      openProjectModal(state.contextMenuProject, true);
+      // Find the actual project object from state to ensure we have the right reference
+      const projectToEdit = state.projects.find(p => p.id === state.contextMenuProject.id);
+      if (projectToEdit) {
+        closeContextMenu();
+        openProjectModal(projectToEdit, true);
+      }
     }
   });
   document.getElementById('context-delete')?.addEventListener('click', () => {
@@ -324,6 +435,17 @@ function setupEventListeners() {
     if (state.contextMenuPrompt) archivePrompt(state.contextMenuPrompt.id);
     closePromptContextMenu();
   });
+  document.getElementById('prompt-context-find-duplicates')?.addEventListener('click', () => {
+    if (state.contextMenuPrompt) {
+      const duplicates = detectDuplicates(state.contextMenuPrompt);
+      if (duplicates.length > 0) {
+        showDuplicateResults(state.contextMenuPrompt, duplicates);
+      } else {
+        showToast('No duplicates found', false, 'success');
+      }
+    }
+    closePromptContextMenu();
+  });
   
   // Global keyboard handler
   document.addEventListener('keydown', handleGlobalKeydown);
@@ -337,12 +459,19 @@ function toggleDarkMode() {
 }
 
 function applyDarkMode() {
+  const moonIcon = document.getElementById('moon-icon');
+  const sunIcon = document.getElementById('sun-icon');
+  
   if (state.darkMode) {
     document.documentElement.classList.add('dark');
     document.body.classList.add('dark');
+    if (moonIcon) moonIcon.classList.remove('hidden');
+    if (sunIcon) sunIcon.classList.add('hidden');
   } else {
     document.documentElement.classList.remove('dark');
     document.body.classList.remove('dark');
+    if (moonIcon) moonIcon.classList.add('hidden');
+    if (sunIcon) sunIcon.classList.remove('hidden');
   }
 }
 
@@ -377,22 +506,328 @@ function updateProUI() {
 function renderProjects() {
   const container = document.getElementById('projects-list');
   container.innerHTML = '';
+  
+  // Add drop zone at the top for unnesting to top level
+  const topDropZone = document.createElement('div');
+  topDropZone.className = 'project-drop-zone';
+  topDropZone.dataset.dropZoneLevel = '0';
+  topDropZone.style.display = 'none'; // Hidden by default, shown on drag
+  
+  // Handle drag events for drop zones
+  topDropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    
+    const draggingId = e.dataTransfer.getData('text/plain');
+    if (!draggingId) return;
+    
+    const draggingProject = state.projects.find(p => p.id === draggingId);
+    if (draggingProject && draggingProject.parentId) {
+      topDropZone.style.display = 'block';
+      topDropZone.classList.add('drop-zone-active');
+    }
+  });
+  
+  topDropZone.addEventListener('dragleave', (e) => {
+    if (!topDropZone.contains(e.relatedTarget)) {
+      topDropZone.style.display = 'none';
+      topDropZone.classList.remove('drop-zone-active');
+    }
+  });
+  
+  topDropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    topDropZone.style.display = 'none';
+    topDropZone.classList.remove('drop-zone-active');
+    
+    const draggingId = e.dataTransfer.getData('text/plain');
+    if (!draggingId) return;
+    
+    const draggingProject = state.projects.find(p => p.id === draggingId);
+    if (draggingProject && draggingProject.parentId) {
+      // Move to top level
+      draggingProject.parentId = null;
+      
+      // Move to top of array
+      const draggingIndex = state.projects.findIndex(p => p.id === draggingId);
+      if (draggingIndex !== -1) {
+        state.projects.splice(draggingIndex, 1);
+        state.projects.unshift(draggingProject);
+      }
+      
+      saveData();
+      renderProjects();
+      showToast(`"${draggingProject.name}" moved to top level`, false, 'success');
+    }
+  });
+  
+  container.appendChild(topDropZone);
 
-  state.projects.forEach(project => {
+  // Build project tree (handle nested projects)
+  const projectTree = buildProjectTree();
+  
+  function renderProjectNode(project, level = 0, isLast = false, parentExpanded = true) {
+    // Skip rendering if parent is collapsed
+    if (level > 0 && !parentExpanded) {
+      return;
+    }
+    
     const item = document.createElement('div');
     const isActive = state.currentProject === project.id;
-    item.className = `project-item ${isActive ? 'active' : ''}`;
+    const hasChildren = project.children && project.children.length > 0;
+    const isExpanded = state.expandedProjects[project.id] !== false; // Default to expanded
+    item.className = `project-item ${isActive ? 'active' : ''} ${level > 0 ? 'project-item-nested' : ''} ${hasChildren ? 'project-item-parent' : ''} ${project.locked ? 'project-item-locked' : 'project-item-draggable'}`;
     item.dataset.projectId = project.id;
+    item.dataset.level = level;
+    item.draggable = !project.locked; // Make draggable if not locked
+    
+    // Add indentation for nested items - more visible spacing
+    const indentPx = level * 24;
+    item.style.paddingLeft = `${indentPx + 12}px`;
+    item.style.position = 'relative';
+    
+    const icon = getProjectIcon(project);
+    const color = getProjectColor(project);
+    const stats = getProjectStats(project.id);
     const menuSpan = project.locked ? '' : '<span class="project-item-menu">⋯</span>';
+    
+    // Add visual indicator for nested items (no arrow)
+    let nestedIndicator = '';
+    if (level > 0) {
+      nestedIndicator = `<span class="project-nest-indicator">${isLast ? '└' : '├'}</span>`;
+    }
+    
+    if (color) {
+      item.style.backgroundColor = color + '15';
+    }
+    
     item.innerHTML = `
+      ${nestedIndicator}
+      <span class="project-item-icon">${icon}</span>
       <span class="project-item-name">${escapeHtml(project.name)}</span>
       ${menuSpan}
     `;
 
-    // Click to filter - optimized for responsiveness
+    // Drag and drop handlers
+    if (!project.locked) {
+      item.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', project.id);
+        item.classList.add('dragging');
+        
+        // Show top-level drop zone if dragging a nested project
+        if (project.parentId) {
+          setTimeout(() => {
+            const topDropZone = document.querySelector('.project-drop-zone[data-drop-zone-level="0"]');
+            if (topDropZone) {
+              topDropZone.style.display = 'block';
+            }
+          }, 10);
+        }
+      });
+      
+      item.addEventListener('dragend', (e) => {
+        item.classList.remove('dragging');
+        // Remove all drop indicators
+        document.querySelectorAll('.project-item-drag-over').forEach(el => {
+          el.classList.remove('project-item-drag-over', 'drag-over-top', 'drag-over-bottom', 'drag-over-nest', 'drag-over-unnest');
+        });
+        // Hide drop zones
+        document.querySelectorAll('.project-drop-zone').forEach(zone => {
+          zone.style.display = 'none';
+          zone.classList.remove('drop-zone-active');
+        });
+      });
+      
+      
+      item.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        
+        const draggingId = e.dataTransfer.getData('text/plain');
+        if (!draggingId || draggingId === project.id) return;
+        
+        const draggingProject = state.projects.find(p => p.id === draggingId);
+        if (!draggingProject) return;
+        
+        // Don't allow dropping on itself or its children
+        if (isDescendant(project.id, draggingId)) {
+          return;
+        }
+        
+        const rect = item.getBoundingClientRect();
+        const mouseY = e.clientY;
+        const edgeThreshold = rect.height * 0.25; // Top/bottom 25% is for reordering/unnesting
+        const isNearTop = mouseY < rect.top + edgeThreshold;
+        const isNearBottom = mouseY > rect.bottom - edgeThreshold;
+        const isSameLevel = draggingProject.parentId === project.parentId;
+        const isNested = draggingProject.parentId !== null;
+        const targetParent = project.parentId;
+        const canUnnest = isNested && isNearTop && targetParent === draggingProject.parentId;
+        
+        // Determine drop mode: reordering, unnesting, or nesting
+        if ((isNearTop || isNearBottom) && isSameLevel) {
+          // Reorder mode (same level, at edges)
+          item.classList.add('project-item-drag-over');
+          if (isNearTop) {
+            item.classList.add('drag-over-top');
+            item.classList.remove('drag-over-bottom', 'drag-over-nest', 'drag-over-unnest');
+          } else {
+            item.classList.add('drag-over-bottom');
+            item.classList.remove('drag-over-top', 'drag-over-nest', 'drag-over-unnest');
+          }
+        } else if (canUnnest) {
+          // Unnest mode (drop at top edge to move to parent's level)
+          item.classList.add('project-item-drag-over', 'drag-over-unnest');
+          item.classList.remove('drag-over-top', 'drag-over-bottom', 'drag-over-nest');
+        } else if (!project.locked) {
+          // Nest mode (drop in middle area to make it a child or change parent)
+          item.classList.add('project-item-drag-over', 'drag-over-nest');
+          item.classList.remove('drag-over-top', 'drag-over-bottom', 'drag-over-unnest');
+        }
+      });
+      
+      item.addEventListener('dragleave', (e) => {
+        item.classList.remove('project-item-drag-over', 'drag-over-top', 'drag-over-bottom', 'drag-over-nest', 'drag-over-unnest');
+      });
+      
+      item.addEventListener('drop', (e) => {
+        e.preventDefault();
+        item.classList.remove('project-item-drag-over', 'drag-over-top', 'drag-over-bottom', 'drag-over-nest', 'drag-over-unnest');
+        
+        // Hide drop zones
+        document.querySelectorAll('.project-drop-zone').forEach(zone => {
+          zone.style.display = 'none';
+          zone.classList.remove('drop-zone-active');
+        });
+        
+        const draggingId = e.dataTransfer.getData('text/plain');
+        if (!draggingId || draggingId === project.id) return;
+        
+        const draggingProject = state.projects.find(p => p.id === draggingId);
+        if (!draggingProject) return;
+        
+        // Don't allow dropping on itself or its children
+        if (isDescendant(project.id, draggingId)) {
+          showToast('Cannot drop project into its own child', true, 'error');
+          return;
+        }
+        
+        // Don't allow nesting into locked projects
+        if (project.locked) {
+          showToast('Cannot nest into locked projects', true, 'error');
+          return;
+        }
+        
+        const rect = item.getBoundingClientRect();
+        const mouseY = e.clientY;
+        const edgeThreshold = rect.height * 0.25;
+        const isNearTop = mouseY < rect.top + edgeThreshold;
+        const isNearBottom = mouseY > rect.bottom - edgeThreshold;
+        const isSameLevel = draggingProject.parentId === project.parentId;
+        const isNested = draggingProject.parentId !== null;
+        const targetParent = project.parentId;
+        
+        // Determine if this is nesting, reordering, or unnesting
+        if ((isNearTop || isNearBottom) && isSameLevel) {
+          // Reorder mode: move within same level
+          const draggingIndex = state.projects.findIndex(p => p.id === draggingId);
+          const targetIndex = state.projects.findIndex(p => p.id === project.id);
+          
+          if (draggingIndex === -1 || targetIndex === -1) return;
+          
+          // Remove dragging project
+          state.projects.splice(draggingIndex, 1);
+          
+          // Calculate new index (accounting for removal)
+          let newIndex = targetIndex;
+          if (draggingIndex < targetIndex) {
+            newIndex = targetIndex - 1;
+          }
+          
+          // Insert at new position
+          if (isNearTop) {
+            state.projects.splice(newIndex, 0, draggingProject);
+          } else {
+            state.projects.splice(newIndex + 1, 0, draggingProject);
+          }
+          
+          saveData();
+          renderProjects();
+          showToast('Project reordered!', false, 'success');
+        } else if (isNearTop && isNested && targetParent === draggingProject.parentId) {
+          // Unnest mode: move to parent's level (drop at top edge of sibling)
+          // This moves the project to the same level as the target (parent's level)
+          const oldParentId = draggingProject.parentId;
+          draggingProject.parentId = targetParent; // Same level as target
+          
+          // Move the project to before the target in the array
+          const draggingIndex = state.projects.findIndex(p => p.id === draggingId);
+          const targetIndex = state.projects.findIndex(p => p.id === project.id);
+          
+          if (draggingIndex !== -1 && targetIndex !== -1) {
+            state.projects.splice(draggingIndex, 1);
+            let newIndex = targetIndex;
+            if (draggingIndex < targetIndex) {
+              newIndex = targetIndex - 1;
+            }
+            state.projects.splice(newIndex, 0, draggingProject);
+          }
+          
+          saveData();
+          renderProjects();
+          showToast(`"${draggingProject.name}" moved to same level as "${project.name}"`, false, 'success');
+        } else if (!project.locked) {
+          // Nest mode: make dragging project a child of target project
+          // OR change parent if already nested
+          const wasNested = draggingProject.parentId !== null;
+          draggingProject.parentId = project.id;
+          
+          // Move the project to after its new parent in the array for better visual ordering
+          const parentIndex = state.projects.findIndex(p => p.id === project.id);
+          const draggingIndex = state.projects.findIndex(p => p.id === draggingId);
+          
+          if (draggingIndex !== -1 && parentIndex !== -1) {
+            // Remove from current position
+            state.projects.splice(draggingIndex, 1);
+            
+            // Find the correct insert position after parent
+            // Need to recalculate parentIndex after removal
+            const newParentIndex = draggingIndex < parentIndex 
+              ? parentIndex - 1 
+              : parentIndex;
+            
+            // Insert after parent (or after all of parent's children)
+            let insertIndex = newParentIndex + 1;
+            // Find where parent's children end
+            while (insertIndex < state.projects.length) {
+              const nextProject = state.projects[insertIndex];
+              if (!nextProject.parentId || nextProject.parentId !== project.id) {
+                break;
+              }
+              insertIndex++;
+            }
+            state.projects.splice(insertIndex, 0, draggingProject);
+          }
+          
+          // Expand the parent to show the new child
+          state.expandedProjects[project.id] = true;
+          
+          saveData();
+          renderProjects();
+          if (wasNested) {
+            showToast(`"${draggingProject.name}" moved under "${project.name}"`, false, 'success');
+          } else {
+            showToast(`"${draggingProject.name}" nested under "${project.name}"`, false, 'success');
+          }
+        }
+      });
+    }
+    
+    // Click handler - toggle expand/collapse for parents, filter for others
     item.addEventListener('click', (e) => {
-      // Handle menu click separately
-      if (e.target.classList && e.target.classList.contains('project-item-menu')) {
+      // Handle menu click separately - don't do anything else
+      if (e.target.classList && (e.target.classList.contains('project-item-menu') || e.target.closest('.project-item-menu'))) {
         e.preventDefault();
         e.stopPropagation();
         // Trigger context menu
@@ -407,7 +842,17 @@ function renderProjects() {
         return;
       }
       
-      // Stop event from bubbling to prevent conflicts
+      // If it's a parent item, clicking anywhere should toggle expand/collapse
+      if (hasChildren) {
+        e.preventDefault();
+        e.stopPropagation();
+        state.expandedProjects[project.id] = !isExpanded;
+        saveData();
+        renderProjects();
+        return;
+      }
+      
+      // For items without children, filter prompts (original behavior)
       e.stopPropagation();
       
       // Update state immediately
@@ -442,6 +887,21 @@ function renderProjects() {
     }
 
     container.appendChild(item);
+    
+    // Render children recursively only if parent is expanded
+    if (project.children && project.children.length > 0 && isExpanded) {
+      project.children.forEach((child, index) => {
+        // Add visual connection for nested items
+        const isLast = index === project.children.length - 1;
+        renderProjectNode(child, level + 1, isLast, isExpanded);
+      });
+    }
+  }
+  
+  // Render all root projects and their children
+  projectTree.forEach(project => {
+    const isExpanded = state.expandedProjects[project.id] !== false;
+    renderProjectNode(project, 0, false, isExpanded);
   });
 }
 
@@ -782,7 +1242,7 @@ function closePromptModal() {
   state.editingPrompt = null;
 }
 
-function handlePromptSave(e) {
+async function handlePromptSave(e) {
   e.preventDefault();
   const titleInput = document.getElementById('modal-title-input');
   const projectSelect = document.getElementById('modal-project-select');
@@ -800,13 +1260,30 @@ function handlePromptSave(e) {
   }
 
   if (state.editingPrompt) {
+    // Save version history before updating
+    if (!state.promptHistory[state.editingPrompt.id]) {
+      state.promptHistory[state.editingPrompt.id] = [];
+    }
+    state.promptHistory[state.editingPrompt.id].push({
+      timestamp: Date.now(),
+      title: state.editingPrompt.title,
+      prompt: state.editingPrompt.prompt,
+      tags: [...state.editingPrompt.tags],
+      projectId: state.editingPrompt.projectId
+    });
+    // Keep only last 10 versions
+    if (state.promptHistory[state.editingPrompt.id].length > 10) {
+      state.promptHistory[state.editingPrompt.id] = state.promptHistory[state.editingPrompt.id].slice(-10);
+    }
+    
     // Update existing
     state.editingPrompt.title = title;
     state.editingPrompt.projectId = projectId;
     state.editingPrompt.tags = tags;
     state.editingPrompt.prompt = prompt;
+    state.editingPrompt.version = (state.editingPrompt.version || 1) + 1;
   } else {
-    // Create new
+    // Check for duplicates before creating new
     const newPrompt = {
       id: generateId(),
       projectId,
@@ -815,17 +1292,54 @@ function handlePromptSave(e) {
       tags,
       lastUsed: 0,
       copyCount: 0,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      version: 1
     };
+    
+    if (!checkForDuplicatesBeforeSave(newPrompt)) {
+      return; // User cancelled
+    }
+    
     state.prompts.push(newPrompt);
   }
 
-  saveData();
+  await saveData();
   renderPrompts();
   renderRecentPrompts();
   renderTagFilters(); // Update tag filters when prompts change
   closePromptModal();
   showToast(state.editingPrompt ? 'Prompt updated!' : 'Prompt created!');
+}
+
+// Build project tree for nested display
+function buildProjectTree() {
+  const rootProjects = state.projects.filter(p => !p.parentId);
+  const childrenMap = {};
+  
+  state.projects.forEach(p => {
+    if (p.parentId) {
+      if (!childrenMap[p.parentId]) childrenMap[p.parentId] = [];
+      childrenMap[p.parentId].push(p);
+    }
+  });
+  
+  // Use array order instead of alphabetical sorting to preserve drag-and-drop order
+  // Projects maintain their order in the array
+  function buildTree(parentId = null) {
+    const projects = parentId ? (childrenMap[parentId] || []) : rootProjects;
+    // Sort by current array order (maintain insertion order)
+    const orderedProjects = projects.sort((a, b) => {
+      const indexA = state.projects.findIndex(p => p.id === a.id);
+      const indexB = state.projects.findIndex(p => p.id === b.id);
+      return indexA - indexB;
+    });
+    return orderedProjects.map(p => ({
+      ...p,
+      children: buildTree(p.id)
+    }));
+  }
+  
+  return buildTree();
 }
 
 // Project modal
@@ -834,12 +1348,41 @@ function openProjectModal(project = null, isRename = false) {
   const modal = document.getElementById('project-modal');
   const title = document.getElementById('project-modal-title');
   const nameInput = document.getElementById('project-name-input');
+  const descriptionInput = document.getElementById('project-description-input');
+  const colorInput = document.getElementById('project-color-input');
+  const iconInput = document.getElementById('project-icon-input');
+  const parentSelect = document.getElementById('project-parent-select');
 
-  title.textContent = isRename ? 'Rename Project' : 'New Project';
-  nameInput.value = project ? project.name : '';
+  title.textContent = isRename ? 'Edit Project' : 'New Project';
+  
+  // Populate parent select (exclude self and children)
+  if (parentSelect) {
+    const availableParents = state.projects.filter(p => 
+      !p.locked && 
+      p.id !== project?.id && 
+      !isDescendant(p.id, project?.id)
+    );
+    parentSelect.innerHTML = '<option value="">None (Top Level)</option>' +
+      availableParents.map(p => 
+        `<option value="${p.id}" ${project?.parentId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+      ).join('');
+  }
+  
+  if (nameInput) nameInput.value = project ? project.name : '';
+  if (descriptionInput) descriptionInput.value = project?.description || '';
+  if (colorInput) colorInput.value = project?.color || '';
+  if (iconInput) iconInput.value = project?.icon || '';
 
   modal.classList.remove('hidden');
-  nameInput.focus();
+  if (nameInput) nameInput.focus();
+}
+
+function isDescendant(projectId, ancestorId) {
+  if (!ancestorId) return false;
+  const project = state.projects.find(p => p.id === projectId);
+  if (!project || !project.parentId) return false;
+  if (project.parentId === ancestorId) return true;
+  return isDescendant(project.parentId, ancestorId);
 }
 
 function closeProjectModal() {
@@ -850,7 +1393,16 @@ function closeProjectModal() {
 function handleProjectSave(e) {
   e.preventDefault();
   const nameInput = document.getElementById('project-name-input');
-  const name = nameInput.value.trim();
+  const descriptionInput = document.getElementById('project-description-input');
+  const colorInput = document.getElementById('project-color-input');
+  const iconInput = document.getElementById('project-icon-input');
+  const parentSelect = document.getElementById('project-parent-select');
+  
+  const name = nameInput?.value.trim() || '';
+  const description = descriptionInput?.value.trim() || '';
+  const color = colorInput?.value.trim() || null;
+  const icon = iconInput?.value.trim() || null;
+  const parentId = parentSelect?.value || null;
 
   if (!name) {
     showToast('Project name is required', true);
@@ -870,15 +1422,27 @@ function handleProjectSave(e) {
     return;
   }
 
-  if (state.editingProject) {
-    // Update existing
-    state.editingProject.name = name;
+  // Find the project in state.projects to ensure we're editing the right one
+  const existingProject = state.editingProject ? state.projects.find(p => p.id === state.editingProject.id) : null;
+  
+  if (existingProject) {
+    // Update existing project
+    existingProject.name = name;
+    existingProject.description = description;
+    existingProject.color = color;
+    existingProject.icon = icon;
+    existingProject.parentId = parentId;
+    state.editingProject = null; // Clear editing state
   } else {
-    // Create new
+    // Create new project
     const newProject = {
       id: generateId(),
       name,
-      locked: false
+      locked: false,
+      description,
+      color,
+      icon,
+      parentId
     };
     state.projects.push(newProject);
   }
@@ -886,7 +1450,7 @@ function handleProjectSave(e) {
   saveData();
   renderProjects();
   closeProjectModal();
-  showToast(state.editingProject ? 'Project updated!' : 'Project created!');
+  showToast(existingProject ? 'Project updated!' : 'Project created!');
 }
 
 // Archive prompt (soft delete)
@@ -1373,6 +1937,12 @@ function closeShortcutsModal() {
 // Quick add from clipboard
 async function quickAddFromClipboard() {
   try {
+    // Check if clipboard API is available
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      showToast('Clipboard API not available. Please ensure the extension has clipboard permissions.', true, 'error');
+      return;
+    }
+    
     const text = await navigator.clipboard.readText();
     if (!text || text.trim().length === 0) {
       showToast('Clipboard is empty', true, 'error');
@@ -1381,20 +1951,36 @@ async function quickAddFromClipboard() {
     
     // Pre-fill prompt modal with clipboard content
     openPromptModal();
-    const textarea = document.getElementById('modal-prompt-textarea');
-    if (textarea) {
-      textarea.value = text;
-      // Try to extract title from first line
-      const firstLine = text.split('\n')[0];
-      if (firstLine.length < 50) {
-        const titleInput = document.getElementById('modal-title-input');
-        if (titleInput) {
-          titleInput.value = firstLine;
+    
+    // Use setTimeout to ensure modal is fully rendered
+    setTimeout(() => {
+      const textarea = document.getElementById('modal-prompt-textarea');
+      if (textarea) {
+        textarea.value = text;
+        // Try to extract title from first line
+        const firstLine = text.split('\n')[0].trim();
+        if (firstLine.length > 0 && firstLine.length < 50) {
+          const titleInput = document.getElementById('modal-title-input');
+          if (titleInput) {
+            titleInput.value = firstLine;
+          }
         }
+        // Focus the textarea for better UX
+        textarea.focus();
+        // Move cursor to end
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
       }
-    }
+    }, 100);
   } catch (err) {
-    showToast('Failed to read clipboard', true, 'error');
+    console.error('Clipboard read error:', err);
+    // More specific error messages
+    if (err.name === 'NotAllowedError') {
+      showToast('Clipboard access denied. Please grant clipboard permissions to the extension.', true, 'error');
+    } else if (err.name === 'NotFoundError') {
+      showToast('Clipboard is empty', true, 'error');
+    } else {
+      showToast(`Failed to read clipboard: ${err.message}`, true, 'error');
+    }
   }
 }
 
@@ -1455,6 +2041,18 @@ function debounce(func, wait) {
   };
 }
 
+// Close modal functions
+function closeTemplateLibrary() {
+  document.getElementById('template-library-modal')?.classList.add('hidden');
+}
+
+function closeImportTextModal() {
+  const modal = document.getElementById('import-text-modal');
+  const textarea = document.getElementById('import-text-textarea');
+  if (modal) modal.classList.add('hidden');
+  if (textarea) textarea.value = '';
+}
+
 // Close all modals
 function closeAllModals() {
   document.getElementById('prompt-modal')?.classList.add('hidden');
@@ -1463,6 +2061,8 @@ function closeAllModals() {
   document.getElementById('command-palette')?.classList.add('hidden');
   document.getElementById('shortcuts-modal')?.classList.add('hidden');
   document.getElementById('archived-modal')?.classList.add('hidden');
+  closeTemplateLibrary();
+  closeImportTextModal();
   commandPaletteOpen = false;
   closeContextMenu();
   closePromptContextMenu();
@@ -2162,4 +2762,488 @@ function openArchivedModal() {
 function closeArchivedModal() {
   document.getElementById('archived-modal')?.classList.add('hidden');
 }
+
+// ========== NEW FEATURES ==========
+
+// 1. PROMPT TEMPLATES/LIBRARY
+function getDefaultTemplates() {
+  return [
+    {
+      id: 'email-cold',
+      name: 'Cold Email Opener',
+      category: 'Email',
+      description: 'Professional cold email introduction',
+      prompt: 'Write a compelling 3-line cold email opener for [product/service] targeting [audience]. Make it personal and value-driven.',
+      tags: ['Email', 'Sales', 'Outreach'],
+      variables: ['product/service', 'audience']
+    },
+    {
+      id: 'blog-intro',
+      name: 'Blog Post Introduction',
+      category: 'Content',
+      description: 'Engaging blog post opening',
+      prompt: 'Create an engaging introduction for a blog post about [topic]. Start with a hook that captures attention using storytelling or surprising statistics.',
+      tags: ['Blog', 'Content', 'Writing'],
+      variables: ['topic']
+    },
+    {
+      id: 'social-post',
+      name: 'Social Media Post',
+      category: 'Social',
+      description: 'Viral social media content',
+      prompt: 'Write a viral [platform] post about [topic] that will get high engagement. Start with a bold statement or question that makes people curious. Include a call-to-action.',
+      tags: ['Social', 'X', 'Marketing'],
+      variables: ['platform', 'topic']
+    },
+    {
+      id: 'code-comment',
+      name: 'Code Documentation',
+      category: 'Code',
+      description: 'Professional code documentation',
+      prompt: 'Write clear, concise documentation comments for this code:\n\n[code]\n\nExplain the purpose, parameters, return values, and any important notes.',
+      tags: ['Code', 'Dev', 'Documentation'],
+      variables: ['code']
+    },
+    {
+      id: 'meeting-agenda',
+      name: 'Meeting Agenda',
+      category: 'Business',
+      description: 'Structured meeting agenda',
+      prompt: 'Create a comprehensive meeting agenda for [meeting-type] meeting. Include:\n1. Objectives\n2. Discussion topics\n3. Action items\n4. Next steps\n\nTopic: [topic]',
+      tags: ['Business', 'Meeting', 'Productivity'],
+      variables: ['meeting-type', 'topic']
+    },
+    {
+      id: 'product-description',
+      name: 'Product Description',
+      category: 'Marketing',
+      description: 'Compelling product description',
+      prompt: 'Write a compelling product description for [product-name]. Highlight:\n- Key features and benefits\n- Target audience\n- Unique selling points\n- Call-to-action',
+      tags: ['Marketing', 'E-commerce', 'Sales'],
+      variables: ['product-name']
+    }
+  ];
+}
+
+function openTemplateLibrary() {
+  const modal = document.getElementById('template-library-modal');
+  if (!modal) return;
+  
+  const templateList = document.getElementById('template-list');
+  if (!templateList) return;
+  
+  // Group templates by category
+  const byCategory = {};
+  state.templates.forEach(template => {
+    const cat = template.category || 'Other';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(template);
+  });
+  
+  templateList.innerHTML = '';
+  
+  Object.keys(byCategory).sort().forEach(category => {
+    const categoryDiv = document.createElement('div');
+    categoryDiv.className = 'template-category';
+    categoryDiv.innerHTML = `<h4 class="template-category-title">${escapeHtml(category)}</h4>`;
+    const templatesDiv = document.createElement('div');
+    templatesDiv.className = 'template-grid';
+    
+    byCategory[category].forEach(template => {
+      const templateCard = document.createElement('div');
+      templateCard.className = 'template-card';
+      templateCard.innerHTML = `
+        <div class="template-card-header">
+          <h5>${escapeHtml(template.name)}</h5>
+          <button class="btn btn-small btn-primary use-template" data-template-id="${template.id}">Use</button>
+        </div>
+        <p class="template-description">${escapeHtml(template.description || '')}</p>
+        <div class="template-tags">
+          ${template.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
+        </div>
+        <div class="template-preview">${escapeHtml(template.prompt.substring(0, 100))}...</div>
+      `;
+      templateCard.querySelector('.use-template').addEventListener('click', () => {
+        useTemplate(template);
+        modal.classList.add('hidden');
+      });
+      templatesDiv.appendChild(templateCard);
+    });
+    
+    categoryDiv.appendChild(templatesDiv);
+    templateList.appendChild(categoryDiv);
+  });
+  
+  modal.classList.remove('hidden');
+}
+
+function useTemplate(template) {
+  openPromptModal();
+  const titleInput = document.getElementById('modal-title-input');
+  const tagsInput = document.getElementById('modal-tags-input');
+  const promptTextarea = document.getElementById('modal-prompt-textarea');
+  
+  if (titleInput) titleInput.value = template.name;
+  if (tagsInput) tagsInput.value = template.tags.join(', ');
+  if (promptTextarea) promptTextarea.value = template.prompt;
+  
+  // Focus on first variable if any
+  if (template.variables && template.variables.length > 0) {
+    setTimeout(() => {
+      const firstVar = `{{${template.variables[0]}}}`;
+      const textarea = promptTextarea;
+      const start = textarea.value.indexOf(firstVar);
+      if (start !== -1) {
+        textarea.focus();
+        textarea.setSelectionRange(start, start + firstVar.length);
+      }
+    }, 100);
+  }
+}
+
+// 7. DUPLICATE DETECTION
+function detectDuplicates(prompt) {
+  const threshold = 0.8; // 80% similarity threshold
+  const duplicates = [];
+  
+  state.prompts.forEach(existingPrompt => {
+    if (existingPrompt.id === prompt.id) return; // Skip self
+    
+    const similarity = calculateSimilarity(
+      prompt.prompt.toLowerCase(),
+      existingPrompt.prompt.toLowerCase()
+    );
+    
+    if (similarity >= threshold) {
+      duplicates.push({
+        prompt: existingPrompt,
+        similarity: Math.round(similarity * 100)
+      });
+    }
+  });
+  
+  return duplicates.sort((a, b) => b.similarity - a.similarity);
+}
+
+function calculateSimilarity(str1, str2) {
+  // Simple Levenshtein distance-based similarity
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+  
+  if (longer.length === 0) return 1.0;
+  
+  const distance = levenshteinDistance(longer, shorter);
+  return (longer.length - distance) / longer.length;
+}
+
+function levenshteinDistance(str1, str2) {
+  const matrix = [];
+  
+  for (let i = 0; i <= str2.length; i++) {
+    matrix[i] = [i];
+  }
+  
+  for (let j = 0; j <= str1.length; j++) {
+    matrix[0][j] = j;
+  }
+  
+  for (let i = 1; i <= str2.length; i++) {
+    for (let j = 1; j <= str1.length; j++) {
+      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  
+  return matrix[str2.length][str1.length];
+}
+
+function checkForDuplicatesBeforeSave(prompt) {
+  const duplicates = detectDuplicates(prompt);
+  if (duplicates.length > 0) {
+    return confirm(
+      `Found ${duplicates.length} similar prompt(s) (${duplicates[0].similarity}% similar):\n\n` +
+      duplicates.slice(0, 3).map(d => `- ${d.prompt.title}`).join('\n') +
+      '\n\nDo you want to save anyway?'
+    );
+  }
+  return true;
+}
+
+function mergeDuplicates(sourceId, targetId) {
+  const source = state.prompts.find(p => p.id === sourceId);
+  const target = state.prompts.find(p => p.id === targetId);
+  
+  if (!source || !target) return;
+  
+  // Merge tags
+  const mergedTags = [...new Set([...target.tags, ...source.tags])];
+  target.tags = mergedTags;
+  
+  // Use higher copy count
+  target.copyCount = Math.max(target.copyCount || 0, source.copyCount || 0);
+  
+  // Use most recent lastUsed
+  target.lastUsed = Math.max(target.lastUsed || 0, source.lastUsed || 0);
+  
+  // Remove source prompt
+  state.prompts = state.prompts.filter(p => p.id !== sourceId);
+  state.archivedPrompts = state.archivedPrompts.filter(id => id !== sourceId);
+  state.recent = state.recent.filter(id => id !== sourceId);
+  state.favorites = state.favorites.filter(id => id !== sourceId);
+  
+  saveData();
+  renderPrompts();
+  showToast('Prompts merged successfully!', false, 'success');
+}
+
+function showDuplicateResults(prompt, duplicates) {
+  const message = `Found ${duplicates.length} similar prompt(s):\n\n` +
+    duplicates.map(d => `${d.prompt.title} (${d.similarity}% similar)`).join('\n') +
+    '\n\nWould you like to merge any of these?';
+  
+  if (confirm(message)) {
+    // Could open a merge modal here, for now just show the duplicates
+    showToast(`Found ${duplicates.length} duplicate(s). Right-click to merge.`, false, 'info');
+  }
+}
+
+// 8. RICH TEXT PREVIEW (removed preview button, keeping markdown rendering for potential future use)
+function renderMarkdown(text) {
+  // Simple markdown renderer
+  let html = escapeHtml(text);
+  
+  // Headers
+  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+  html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+  html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+  
+  // Bold
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+  
+  // Italic
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  html = html.replace(/_(.*?)_/g, '<em>$1</em>');
+  
+  // Code blocks
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+  
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+  
+  return html;
+}
+
+// 12. ENHANCED ORGANIZATION
+function updateProjectDisplay() {
+  // This will be called when rendering projects to show icons, colors, etc.
+  renderProjects();
+}
+
+function getProjectIcon(project) {
+  if (project.icon) {
+    return project.icon;
+  }
+  // Default icons based on project name
+  const iconMap = {
+    'general': '📁',
+    'blogs': '📝',
+    'x': '🐦',
+    'code': '💻',
+    'dev': '⚙️'
+  };
+  return iconMap[project.name.toLowerCase()] || '📂';
+}
+
+function getProjectColor(project) {
+  if (project.color) {
+    return project.color;
+  }
+  return null;
+}
+
+function getProjectStats(projectId) {
+  const projectPrompts = state.prompts.filter(p => p.projectId === projectId && !state.archivedPrompts.includes(p.id));
+  return {
+    total: projectPrompts.length,
+    favorites: projectPrompts.filter(p => state.favorites.includes(p.id)).length,
+    totalCopies: projectPrompts.reduce((sum, p) => sum + (p.copyCount || 0), 0),
+    lastUsed: projectPrompts.length > 0 
+      ? Math.max(...projectPrompts.map(p => p.lastUsed || 0))
+      : 0
+  };
+}
+
+// 13. IMPORT FROM EXTERNAL SOURCES
+async function importFromCSV(csvText) {
+  try {
+    const lines = csvText.split('\n').filter(line => line.trim());
+    if (lines.length < 2) {
+      throw new Error('CSV must have at least a header row and one data row');
+    }
+    
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const titleIdx = headers.findIndex(h => h.includes('title'));
+    const promptIdx = headers.findIndex(h => h.includes('prompt') || h.includes('content') || h.includes('text'));
+    const tagsIdx = headers.findIndex(h => h.includes('tag'));
+    const projectIdx = headers.findIndex(h => h.includes('project'));
+    
+    if (titleIdx === -1 || promptIdx === -1) {
+      throw new Error('CSV must have "title" and "prompt" columns');
+    }
+    
+    const imported = [];
+    for (let i = 1; i < lines.length; i++) {
+      const values = parseCSVLine(lines[i]);
+      const title = values[titleIdx]?.trim();
+      const prompt = values[promptIdx]?.trim();
+      
+      if (!title || !prompt) continue;
+      
+      const tags = tagsIdx !== -1 ? values[tagsIdx]?.split(',').map(t => t.trim()).filter(Boolean) || [] : [];
+      const projectName = projectIdx !== -1 ? values[projectIdx]?.trim() : 'general';
+      
+      // Find or create project
+      let project = state.projects.find(p => p.name.toLowerCase() === projectName.toLowerCase());
+      if (!project && projectName !== 'general') {
+        project = {
+          id: generateId(),
+          name: projectName,
+          locked: false,
+          color: null,
+          icon: null,
+          description: '',
+          parentId: null
+        };
+        state.projects.push(project);
+      }
+      const projectId = project ? project.id : 'general';
+      
+      const newPrompt = {
+        id: generateId(),
+        projectId,
+        title,
+        prompt,
+        tags,
+        lastUsed: 0,
+        copyCount: 0,
+        createdAt: Date.now(),
+        version: 1
+      };
+      
+      state.prompts.push(newPrompt);
+      imported.push(newPrompt);
+    }
+    
+    await saveData();
+    renderProjects();
+    renderPrompts();
+    showToast(`Successfully imported ${imported.length} prompt(s)!`, false, 'success');
+    return imported;
+  } catch (error) {
+    showToast(`Import failed: ${error.message}`, true, 'error');
+    throw error;
+  }
+}
+
+function parseCSVLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+    
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        i++; // Skip next quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current);
+  return values;
+}
+
+async function importFromPlainText(text) {
+  try {
+    // Try to parse as one prompt per line or section
+    const lines = text.split('\n').filter(l => l.trim());
+    const imported = [];
+    
+    // Simple heuristic: if text has clear separators, use them
+    const separator = text.includes('---') ? '---' : 
+                     text.includes('===') ? '===' :
+                     text.includes('\n\n\n') ? '\n\n\n' : null;
+    
+    if (separator) {
+      const sections = text.split(separator).filter(s => s.trim());
+      sections.forEach((section, idx) => {
+        const lines = section.trim().split('\n');
+        const title = lines[0].trim() || `Imported Prompt ${idx + 1}`;
+        const prompt = lines.slice(1).join('\n').trim() || section.trim();
+        
+        if (prompt) {
+          const newPrompt = {
+            id: generateId(),
+            projectId: 'general',
+            title,
+            prompt,
+            tags: [],
+            lastUsed: 0,
+            copyCount: 0,
+            createdAt: Date.now(),
+            version: 1
+          };
+          state.prompts.push(newPrompt);
+          imported.push(newPrompt);
+        }
+      });
+    } else {
+      // Single prompt
+      const newPrompt = {
+        id: generateId(),
+        projectId: 'general',
+        title: 'Imported Prompt',
+        prompt: text.trim(),
+        tags: [],
+        lastUsed: 0,
+        copyCount: 0,
+        createdAt: Date.now(),
+        version: 1
+      };
+      state.prompts.push(newPrompt);
+      imported.push(newPrompt);
+    }
+    
+    await saveData();
+    renderPrompts();
+    showToast(`Successfully imported ${imported.length} prompt(s)!`, false, 'success');
+    return imported;
+  } catch (error) {
+    showToast(`Import failed: ${error.message}`, true, 'error');
+    throw error;
+  }
+}
+
+// ========== END NEW FEATURES ==========
 

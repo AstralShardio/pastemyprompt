@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "description": "A zero-server, local-first AI prompt manager with project-based organization",
   "permissions": [
-    "storage"
+    "storage",
+    "clipboardRead",
+    "clipboardWrite"
   ],
   "action": {
     "default_popup": "popup.html",
