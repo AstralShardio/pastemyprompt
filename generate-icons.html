@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generate Icons for PasteMyPrompt</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .icon-preview {
+      margin: 20px 0;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    canvas {
+      border: 1px solid #ccc;
+    }
+    button {
+      padding: 10px 20px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+  </style>
+</head>
+<body>
+  <h1>PasteMyPrompt Icon Generator</h1>
+  <p>Click the buttons below to generate and download the icon files.</p>
+  
+  <div class="icon-preview">
+    <canvas id="icon16" width="16" height="16"></canvas>
+    <button onclick="downloadIcon('icon16', 16)">Download 16x16</button>
+  </div>
+  
+  <div class="icon-preview">
+    <canvas id="icon48" width="48" height="48"></canvas>
+    <button onclick="downloadIcon('icon48', 48)">Download 48x48</button>
+  </div>
+  
+  <div class="icon-preview">
+    <canvas id="icon128" width="128" height="128"></canvas>
+    <button onclick="downloadIcon('icon128', 128)">Download 128x128</button>
+  </div>
+  
+  <button onclick="downloadAll()" style="margin-top: 20px; background: #2196F3;">Download All Icons</button>
+
+  <script>
+    function drawIcon(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+      
+      // Background gradient - coral to orange
+      const gradient = ctx.createLinearGradient(0, 0, size, size);
+      gradient.addColorStop(0, '#ff6b6b');
+      gradient.addColorStop(1, '#ffa94d');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Draw "PM" text (PasteMyPrompt)
+      ctx.fillStyle = 'white';
+      ctx.font = `bold ${size * 0.45}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('PM', size / 2, size / 2);
+    }
+    
+    function downloadIcon(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `icon${size}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+    
+    function downloadAll() {
+      setTimeout(() => downloadIcon('icon16', 16), 100);
+      setTimeout(() => downloadIcon('icon48', 48), 200);
+      setTimeout(() => downloadIcon('icon128', 128), 300);
+    }
+    
+    // Draw all icons on load
+    window.onload = () => {
+      drawIcon('icon16', 16);
+      drawIcon('icon48', 48);
+      drawIcon('icon128', 128);
+    };
+  </script>
+</body>
+</html>
+
